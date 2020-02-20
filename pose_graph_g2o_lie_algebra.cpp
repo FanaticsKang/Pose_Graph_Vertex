@@ -114,13 +114,9 @@ public:
 
     // 误差计算与书中推导一致
     virtual void computeError() override {
-        SE3d T_wi = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
-        SE3d T_wj = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
-
-        SE3d& T_ij = _measurement;
-        SE3d T_ji = T_ij.inverse();
-
-        _error = (T_ji * T_wi.inverse() * T_wj).log();
+        SE3d v1 = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
+        SE3d v2 = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
+        _error = (_measurement.inverse() * v1.inverse() * v2).log();
     }
 
     // 雅可比计算
@@ -128,7 +124,7 @@ public:
         SE3d v1 = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
         SE3d v2 = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
         Matrix6d J = JRInv(SE3d::exp(_error));
-        // 尝试把J近似为I？
+
         _jacobianOplusXi = -J * v2.inverse().Adj();
         _jacobianOplusXj = J * v2.inverse().Adj();
     }
