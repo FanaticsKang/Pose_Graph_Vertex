@@ -36,6 +36,18 @@ Matrix6d JRInv(const SE3d &e) {
     return J;
 }
 
+Eigen::Matrix3d skew(const Eigen::Vector3d&v)
+{
+    Matrix3d m;
+    m.fill(0.);
+    m(0,1)  = -v(2);
+    m(0,2)  =  v(1);
+    m(1,2)  = -v(0);
+    m(1,0)  =  v(2);
+    m(2,0) = -v(1);
+    m(2,1) = v(0);
+    return m;
+}
 // 李代数顶点
 typedef Matrix<double, 6, 1> Vector6d;
 
@@ -69,7 +81,8 @@ public:
     virtual void oplusImpl(const double *update) override {
         Vector6d upd;
         upd << update[0], update[1], update[2], update[3], update[4], update[5];
-        _estimate = SE3d::exp(upd) * _estimate;
+        SE3d update_se = SE3d::exp(upd);
+        _estimate = _estimate * update_se.inverse();
     }
 };
 
@@ -114,19 +127,52 @@ public:
 
     // 误差计算与书中推导一致
     virtual void computeError() override {
-        SE3d v1 = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
-        SE3d v2 = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
-        _error = (_measurement.inverse() * v1.inverse() * v2).log();
+        SE3d T_wi = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
+        SE3d T_wj = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
+
+        SE3d& T_ij = _measurement;
+        SE3d T_ji = T_ij.inverse();
+
+        _error = (T_ji * T_wi.inverse() * T_wj).log();
     }
 
     // 雅可比计算
     virtual void linearizeOplus() override {
-        SE3d v1 = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
-        SE3d v2 = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
-        Matrix6d J = JRInv(SE3d::exp(_error));
+        SE3d T_wi = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
+        SE3d T_wj = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
 
-        _jacobianOplusXi = -J * v2.inverse().Adj();
-        _jacobianOplusXj = J * v2.inverse().Adj();
+        SE3d T_iw = T_wi.inverse();
+        SE3d T_jw = T_wj.inverse();
+
+        SE3d& T_ij = _measurement;
+        SE3d T_ji = T_ij.inverse();
+        Eigen::Matrix3d R_ji = T_ji.rotationMatrix();
+        Eigen::Vector3d t_ji = T_ji.translation();
+
+        Eigen::Matrix<double, 6, 6> I6 = Eigen::Matrix<double, 6, 6>::Identity();
+        SE3d delta_sim3 = T_ji * T_iw * T_wj;
+
+        Eigen::Matrix<double, 6, 1> sim3 = SE3d::log(delta_sim3);
+        Eigen::Vector3d tau = sim3.block<3, 1>(0, 0); // translation
+        Eigen::Vector3d phi = sim3.block<3, 1>(3, 0); // rotation
+
+        Eigen::Matrix<double, 6, 6> Ad_T_ji = Eigen::Matrix<double, 6, 6>::Zero();
+        Ad_T_ji.block<3, 3>(0, 0) = R_ji;
+        Ad_T_ji.block<3, 3>(3, 3) = R_ji;
+        Ad_T_ji.block<3, 3>(0, 3) = skew(t_ji) * R_ji;
+
+
+        Eigen::Matrix<double, 6, 6> J1 = Eigen::Matrix<double, 6, 6>::Zero();
+        J1.block<3, 3>(0, 0) = -skew(phi);
+        J1.block<3, 3>(3, 3) = -skew(phi);
+        J1.block<3, 3>(0, 3) = -skew(tau);
+        _jacobianOplusXi = (I6 + 0.5 * J1) * Ad_T_ji;
+
+        Eigen::Matrix<double, 6, 6> J2 = Eigen::Matrix<double, 6, 6>::Zero();
+        J2.block<3, 3>(0, 0) = skew(phi);
+        J2.block<3, 3>(3, 3) = skew(phi);
+        J2.block<3, 3>(0, 3) = skew(tau);
+        _jacobianOplusXj = -(I6 + 0.5 * J2);
     }
 };
 
