@@ -146,8 +146,6 @@ public:
 
         SE3d& T_ij = _measurement;
         SE3d T_ji = T_ij.inverse();
-        Eigen::Matrix3d R_ji = T_ji.rotationMatrix();
-        Eigen::Vector3d t_ji = T_ji.translation();
 
         Eigen::Matrix<double, 6, 6> I6 = Eigen::Matrix<double, 6, 6>::Identity();
         SE3d delta_sim3 = T_ji * T_iw * T_wj;
@@ -156,11 +154,7 @@ public:
         Eigen::Vector3d tau = sim3.block<3, 1>(0, 0); // translation
         Eigen::Vector3d phi = sim3.block<3, 1>(3, 0); // rotation
 
-        Eigen::Matrix<double, 6, 6> Ad_T_ji = Eigen::Matrix<double, 6, 6>::Zero();
-        Ad_T_ji.block<3, 3>(0, 0) = R_ji;
-        Ad_T_ji.block<3, 3>(3, 3) = R_ji;
-        Ad_T_ji.block<3, 3>(0, 3) = skew(t_ji) * R_ji;
-
+        Eigen::Matrix<double, 6, 6> Ad_T_ji = T_ji.Adj();
 
         Eigen::Matrix<double, 6, 6> J1 = Eigen::Matrix<double, 6, 6>::Zero();
         J1.block<3, 3>(0, 0) = -skew(phi);

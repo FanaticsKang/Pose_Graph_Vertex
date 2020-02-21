@@ -68,11 +68,26 @@ virtual void linearizeOplus() override {
     SE3d v1 = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
     SE3d v2 = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
     Matrix6d J = JRInv(SE3d::exp(_error));
-    // 尝试把J近似为I？
+
     _jacobianOplusXi = -J * v2.inverse().Adj();
     _jacobianOplusXj = J * v2.inverse().Adj();
 }
 ```
+
+### 1.3 问题
+注意代码`JRInv`关于$\tau^{\wedge}$的代码
+```C++
+J.block(0, 0, 3, 3) = SO3d::hat(e.so3().log());
+J.block(0, 3, 3, 3) = SO3d::hat(e.translation());
+```
+对比旋转的反对称阵, 第二行直接使用了平移部分的反对称阵, 而不是**李代数下平移分量**的反对称阵. 这里实测代码部分是正确的, 那么真实实现的$J_r^{-1}$实际上为:
+$$
+J_r^{-1} \approx I + \frac{1}{2}\begin{bmatrix} 
+\phi^{\wedge} & t^{\wedge} \\
+0_{3\times3} & \phi^{\wedge}
+\end{bmatrix}
+$$
+其中$\phi$为误差在**李代数**下的旋转分量, $t$为误差在**李群**下的平移分量.
 
 ## 2 Local Accuracy and Global Consistency for Efficient Visual SLAM中的求解方法
 见论文附录B.6, 第195页.
@@ -112,5 +127,37 @@ R_{ji} & t_{ji}^{\wedge}R_{ji} \\
 $$
 
 ## 2.2 对应代码
-TODO 对应代码
-TODO 生成一个PDF方便查看
+```
+virtual void linearizeOplus() override {
+    SE3d T_wi = (static_cast<VertexSE3LieAlgebra *> (_vertices[0]))->estimate();
+    SE3d T_wj = (static_cast<VertexSE3LieAlgebra *> (_vertices[1]))->estimate();
+
+    SE3d T_iw = T_wi.inverse();
+    SE3d T_jw = T_wj.inverse();
+
+    SE3d& T_ij = _measurement;
+    SE3d T_ji = T_ij.inverse();
+
+    Eigen::Matrix<double, 6, 6> I6 = Eigen::Matrix<double, 6, 6>::Identity();
+    SE3d delta_sim3 = T_ji * T_iw * T_wj;
+
+    Eigen::Matrix<double, 6, 1> sim3 = SE3d::log(delta_sim3);
+    Eigen::Vector3d tau = sim3.block<3, 1>(0, 0); // translation
+    Eigen::Vector3d phi = sim3.block<3, 1>(3, 0); // rotation
+
+    // 计算伴随
+    Eigen::Matrix<double, 6, 6> Ad_T_ji = T_ji.Adj();
+
+    Eigen::Matrix<double, 6, 6> J1 = Eigen::Matrix<double, 6, 6>::Zero();
+    J1.block<3, 3>(0, 0) = -skew(phi);
+    J1.block<3, 3>(3, 3) = -skew(phi);
+    J1.block<3, 3>(0, 3) = -skew(tau);
+    _jacobianOplusXi = (I6 + 0.5 * J1) * Ad_T_ji;
+
+    Eigen::Matrix<double, 6, 6> J2 = Eigen::Matrix<double, 6, 6>::Zero();
+    J2.block<3, 3>(0, 0) = skew(phi);
+    J2.block<3, 3>(3, 3) = skew(phi);
+    J2.block<3, 3>(0, 3) = skew(tau);
+    _jacobianOplusXj = -(I6 + 0.5 * J2);
+}
+```
